@@ -1,0 +1,14 @@
+# --- Carpeta con chats ---
+data/
+
+# --- Jupyter Notebooks ---
+# Borra los puntos de control automáticos que ensucian el repo
+.ipynb_checkpoints/
+
+# --- Streamlit ---
+.streamlit/secrets.toml
+
+# --- Seguridad ---
+.env
+api_keys.txt
+config.py
