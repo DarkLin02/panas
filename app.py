@@ -3,19 +3,21 @@ import re
 import regex
 import demoji
 import numpy as np
-from collections import Counter
+#from collections import Counter # No se usa explícitamente en el script actual
 import plotly.express as px
 from PIL import Image
 from wordcloud import WordCloud, STOPWORDS
 import streamlit as st
 import string
+import requests
+from io import StringIO
 
 # Configuración de la página (Título y Favicon)
 st.set_page_config(page_title="Chat Analytics - Bro Edition", page_icon="☯️", layout="wide")
 
 ###################################
 # Título de la aplicación
-st.title('☕ Análisis de Chat: Edición "Terroncito de Azucar" 🤜🤛')
+st.title('☕ Análisis de Chat para mi terroncito de azucar 🐈‍⬛')
 st.markdown("### Estadísticas de nuestra amistad legendaria")
 ###################################
 
@@ -59,51 +61,85 @@ def ObtenerPartes(linea):
 # ### Paso 2: Carga y Procesamiento de Datos
 ##################################################################################
 
-@st.cache_data
-def cargar_datos_chat(ruta_archivo):
+@st.cache_data(show_spinner=False)
+def procesar_datos(file_content):
+    """
+    Procesa el contenido del chat (string) y devuelve el DataFrame.
+    """
     DatosLista = []
     
+    # Convertimos el string gigante en un iterador línea por línea
+    buffer = StringIO(file_content)
+    
+    # Saltar header de cifrado si existe (la primera línea)
+    # buffer.readline() 
+    
+    fecha, hora, miembro = None, None, None
+    
+    while True:
+        linea = buffer.readline()
+        if not linea:
+            break
+        linea = linea.strip()
+        
+        if IniciaConFechaYHora(linea): 
+            fecha, hora, miembro, mensaje = ObtenerPartes(linea) 
+            DatosLista.append([fecha, hora, miembro, mensaje])
+        else:
+            if DatosLista:
+                DatosLista[-1][-1] += " " + linea 
+                    
+    df = pd.DataFrame(DatosLista, columns=['Fecha', 'Hora', 'Miembro', 'Mensaje'])
+    
     try:
-        with open(ruta_archivo, encoding="utf-8") as fp: 
-            fp.readline() # Saltar header de cifrado si existe
-            fecha, hora, miembro = None, None, None
-            
-            while True:
-                linea = fp.readline()
-                if not linea:
-                    break
-                linea = linea.strip()
-                
-                if IniciaConFechaYHora(linea): 
-                    fecha, hora, miembro, mensaje = ObtenerPartes(linea) 
-                    DatosLista.append([fecha, hora, miembro, mensaje])
-                else:
-                    # Continuación de mensaje anterior
-                    if DatosLista:
-                        DatosLista[-1][-1] += " " + linea 
-                        
-        df = pd.DataFrame(DatosLista, columns=['Fecha', 'Hora', 'Miembro', 'Mensaje'])
-        
-        # Conversión de fechas (Manejo de errores si el formato varía)
+        df['Fecha'] = pd.to_datetime(df['Fecha'], format="%d/%m/%Y")
+    except:
+        df['Fecha'] = pd.to_datetime(df['Fecha'], dayfirst=False)
+
+    df = df.dropna().reset_index(drop=True)
+    return df
+
+def cargar_chat():
+    """
+    Intenta cargar desde Secrets (Nube) o pide archivo manual.
+    """
+    content = None
+    
+    # 1. Intentar cargar desde Secrets (Google Drive / URL directa)
+    if 'chat_url' in st.secrets:
         try:
-            df['Fecha'] = pd.to_datetime(df['Fecha'], format="%d/%m/%Y")
-        except:
-            # Intento secundario para formato m/d/y si falla el primero
-            df['Fecha'] = pd.to_datetime(df['Fecha'], dayfirst=False)
-
-        df = df.dropna().reset_index(drop=True)
-        return df
+            with st.spinner('Descargando historial cifrado desde la nube...'):
+                url = st.secrets['chat_url']
+                # Usamos requests para bajar el txt
+                response = requests.get(url)
+                response.raise_for_status()
+                # Decodificar el contenido a string
+                content = response.content.decode('utf-8')
+                st.success("Datos cargados desde la nube privada.")
+        except Exception as e:
+            st.warning(f"No se pudo cargar desde la nube: {e}")
+    
+    # 2. Si falló o no hay secretos, usar File Uploader
+    if content is None:
+        st.info("⚠️ Modo Seguro: Sube tu archivo `_chat.txt` exportado de WhatsApp.")
+        uploaded_file = st.file_uploader("Subir historial de chat", type="txt")
         
-    except FileNotFoundError:
-        st.error("No se encontró el archivo de chat. Revisa la ruta en 'app.py'.")
-        return pd.DataFrame()
+        if uploaded_file is not None:
+            content = uploaded_file.getvalue().decode("utf-8")
+            
+    return content
 
-# RUTA DEL ARCHIVO (Asegúrate de cambiar esto al nombre real del chat con tu amigo)
-# Lo ideal sería usar st.file_uploader, pero mantenemos la estructura local.
-RUTA_CHAT = 'Data/Chat de WhatsApp con Pana Ema Bade.txt' 
-df = cargar_datos_chat(RUTA_CHAT)
+# --- FLUJO PRINCIPAL ---
+
+raw_text = cargar_chat()
+
+if raw_text is None:
+    st.stop() # Detener ejecución hasta tener datos
+
+df = procesar_datos(raw_text)
 
 if df.empty:
+    st.error("El archivo parece estar vacío o no tiene el formato correcto.")
     st.stop()
 
 # --- FILTROS DE SIDEBAR (Dinámicos) ---
@@ -234,7 +270,6 @@ with col_wc2:
     **Notas:**
     - Se eliminaron palabras comunes (stopwords).
     - Se filtró 'Multimedia omitido'.
-    - Si ves muchos 'jajaja', es buena señal.
     """)
 
 st.markdown("---")
